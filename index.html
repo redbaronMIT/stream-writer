@@ -242,6 +242,30 @@
     cursor: pointer;
   }
   #settings input:disabled { cursor: default; }
+  #settings input[type="text"] {
+    width: 9rem;
+    padding: 0.2rem 0;
+    background: transparent;
+    border: 0;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.25);
+    outline: none;
+    color: inherit;
+    font: inherit;
+    text-align: right;
+  }
+  #settings .hint { margin-top: -0.5rem; font-size: 0.75rem; opacity: 0.55; }
+  #settings button.link {
+    align-self: flex-end;
+    margin-top: -0.5rem;
+    padding: 0;
+    background: none;
+    border: 0;
+    color: inherit;
+    font-size: 0.75rem;
+    opacity: 0.6;
+    cursor: pointer;
+  }
+  #settings button.link:hover { opacity: 1; text-decoration: underline; }
   #settings button.danger {
     align-self: flex-start;
     padding: 0.35rem 0.7rem;
@@ -368,6 +392,12 @@
     <input type="range" id="set-fade" min="0" max="100" step="5">
     <output id="out-fade"></output>
   </label>
+  <label>
+    <span>Search for more backgrounds</span>
+    <input type="text" id="set-search" placeholder="e.g. forest" spellcheck="false" autocomplete="off">
+  </label>
+  <div class="hint" id="searchStatus"></div>
+  <button type="button" id="clearSearchBtn" class="link">clear search</button>
   <button type="button" id="clearHistBtn" class="danger">clear history</button>
 </div>
 
@@ -460,7 +490,49 @@
       text: "Grandby Lake · inkknife_2000 · CC BY-SA 2.0",
       url: "https://commons.wikimedia.org/wiki/File:Continental_Divide_and_Calm_Waters,_Grandby_Lake,_CO_2012_(14854216635).jpg",
     },
+    {
+      src: "https://thumb.wikimedia.org/wikipedia/commons/thumb/d/d6/Jellyfish_underwater_view_%28Unsplash%29.jpg/1920px-Jellyfish_underwater_view_%28Unsplash%29.jpg",
+      text: "Jellyfish · Jeremy Bishop · CC0",
+      url: "https://commons.wikimedia.org/wiki/File:Jellyfish_underwater_view_(Unsplash).jpg",
+    },
+    {
+      src: "https://thumb.wikimedia.org/wikipedia/commons/thumb/7/7e/Green_sea_turtle_underwater_animal.jpg/1920px-Green_sea_turtle_underwater_animal.jpg",
+      text: "Green sea turtle · U.S. Fish and Wildlife Service · Public domain",
+      url: "https://commons.wikimedia.org/wiki/File:Green_sea_turtle_underwater_animal.jpg",
+    },
+    {
+      src: "https://thumb.wikimedia.org/wikipedia/commons/thumb/d/de/Group_Of_Fish_%28Unsplash%29.jpg/1920px-Group_Of_Fish_%28Unsplash%29.jpg",
+      text: "Fish · Jakob Owens · CC0",
+      url: "https://commons.wikimedia.org/wiki/File:Group_Of_Fish_(Unsplash).jpg",
+    },
+    {
+      src: "https://thumb.wikimedia.org/wikipedia/commons/thumb/2/22/Chromis_cyanea_%28blue_chromis%29_%28San_Salvador_Island%2C_Bahamas%29_1_%2815964263610%29.jpg/1920px-Chromis_cyanea_%28blue_chromis%29_%28San_Salvador_Island%2C_Bahamas%29_1_%2815964263610%29.jpg",
+      text: "Blue chromis · James St. John · CC BY 2.0",
+      url: "https://commons.wikimedia.org/wiki/File:Chromis_cyanea_(blue_chromis)_(San_Salvador_Island,_Bahamas)_1_(15964263610).jpg",
+    },
+    {
+      src: "https://thumb.wikimedia.org/wikipedia/commons/thumb/5/5d/Widefield_image_of_the_sky_around_Barnard%E2%80%99s_Star_showing_its_motion.jpg/1920px-Widefield_image_of_the_sky_around_Barnard%E2%80%99s_Star_showing_its_motion.jpg",
+      text: "Sky around Barnard's Star · ESO/DSS2 · CC BY 4.0",
+      url: "https://commons.wikimedia.org/wiki/File:Widefield_image_of_the_sky_around_Barnard%E2%80%99s_Star_showing_its_motion.jpg",
+    },
+    {
+      src: "https://thumb.wikimedia.org/wikipedia/commons/thumb/e/e5/M7_%28Ptolemy_Cluster%29_%E2%80%93_2020-07-14_%E2%80%93_V4_%2853939555908%29.png/1920px-M7_%28Ptolemy_Cluster%29_%E2%80%93_2020-07-14_%E2%80%93_V4_%2853939555908%29.png",
+      text: "Ptolemy Cluster (M7) · horizon_productions · CC0",
+      url: "https://commons.wikimedia.org/wiki/File:M7_(Ptolemy_Cluster)_%E2%80%93_2020-07-14_%E2%80%93_V4_(53939555908).png",
+    },
+    {
+      src: "https://upload.wikimedia.org/wikipedia/commons/7/75/Pleiades_star_cluster.jpg",
+      text: "Pleiades · Gravitatas · CC0",
+      url: "https://commons.wikimedia.org/wiki/File:Pleiades_star_cluster.jpg",
+    },
+    {
+      src: "https://thumb.wikimedia.org/wikipedia/commons/thumb/4/4e/Pleiades_large.jpg/1920px-Pleiades_large.jpg",
+      text: "Pleiades · NASA, ESA, AURA/Caltech · Public domain",
+      url: "https://commons.wikimedia.org/wiki/File:Pleiades_large.jpg",
+    },
   ];
+
+  const DEFAULT_BACKGROUNDS = BACKGROUNDS.slice();
 
   const $ = (id) => document.getElementById(id);
   const strip = $("strip");
@@ -682,6 +754,7 @@
     ink: "#f5f5f5",
     boxColor: "#000000",
     textFade: 0,
+    searchTerm: "",
   };
   const settings = (() => {
     try { return { ...DEFAULTS, ...JSON.parse(localStorage.getItem(SETTINGS_KEY) || "{}") }; }
@@ -705,6 +778,53 @@
     textFade: $("set-fade"),
   };
 
+  // ---------- background search (Wikimedia Commons, no API key) ----------
+  // Search results replace the background set. Clearing the term restores the default set.
+  const searchStatus = (msg) => { $("searchStatus").textContent = msg; };
+  const toEntry = (page) => {
+    const info = page.imageinfo?.[0];
+    if (!info || !/^image\/(jpeg|png)$/.test(info.mime)) return null;
+    if (!info.thumburl || info.width < 1600 || info.width <= info.height) return null;
+    const meta = info.extmetadata || {};
+    const plain = (key) => (meta[key]?.value || "").replace(/<[^>]*>/g, "").trim();
+    const title = page.title.replace(/^File:/, "").replace(/\.[^.]+$/, "").replace(/_/g, " ").slice(0, 60);
+    const artist = plain("Artist").slice(0, 40) || "unknown author";
+    const license = plain("LicenseShortName") || "see file page";
+    return { src: info.thumburl, text: `${title} · ${artist} · ${license}`, url: info.descriptionurl };
+  };
+  const searchBackgrounds = async (term) => {
+    term = term.trim();
+    settings.searchTerm = term;
+    saveSettings();
+    if (!term) {
+      BACKGROUNDS.splice(0, BACKGROUNDS.length, ...DEFAULT_BACKGROUNDS);
+      searchStatus("");
+      setBackground(Math.floor(Math.random() * BACKGROUNDS.length));
+      return;
+    }
+    searchStatus("searching…");
+    try {
+      const params = new URLSearchParams({
+        action: "query", format: "json", origin: "*",
+        generator: "search", gsrsearch: term, gsrnamespace: "6", gsrlimit: "50",
+        prop: "imageinfo", iiprop: "url|size|mime|extmetadata", iiurlwidth: "1920",
+      });
+      const res = await fetch(`https://commons.wikimedia.org/w/api.php?${params}`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      const found = Object.values(data.query?.pages ?? {}).map(toEntry).filter(Boolean);
+      if (!found.length) {
+        searchStatus("no landscape photos found; keeping current set");
+        return;
+      }
+      BACKGROUNDS.splice(0, BACKGROUNDS.length, ...found);
+      setBackground(Math.floor(Math.random() * found.length));
+      searchStatus(`${found.length} images for "${term}"`);
+    } catch {
+      searchStatus("search failed; try again later");
+    }
+  };
+
   // Push settings into CSS variables and sync the controls to them
   const applySettings = () => {
     const root = document.documentElement.style;
@@ -725,6 +845,7 @@
     ui.ink.value = settings.ink;
     ui.boxColor.value = settings.boxColor;
     ui.textFade.value = settings.textFade;
+    $("set-search").value = settings.searchTerm;
     $("out-fade").textContent = `${settings.textFade}%`;
 
     // Box-only controls are inert while the box is hidden
@@ -773,6 +894,21 @@
     try { localStorage.removeItem(HISTORY_KEY); } catch {}
     if ($("history").classList.contains("open")) renderHistory();
   });
+  // Clicking anywhere outside an open panel closes it (the footer buttons toggle their own panel)
+  document.addEventListener("pointerdown", (e) => {
+    if (["setBtn", "histBtn", "aboutBtn"].some((id) => $(id).contains(e.target))) return;
+    for (const id of ["settings", "history", "about"]) {
+      const panel = $(id);
+      if (panel.classList.contains("open") && !panel.contains(e.target)) panel.classList.remove("open");
+    }
+  });
+  $("clearSearchBtn").addEventListener("click", () => {
+    $("set-search").value = "";
+    searchBackgrounds("");
+  });
+  $("set-search").addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); searchBackgrounds($("set-search").value); }
+  });
   $("aboutBtn").addEventListener("click", () => {
     const panel = $("about");
     $("settings").classList.remove("open");
@@ -786,6 +922,7 @@
   updateCount();
   fitBottom();
   setBackground(bgIndex);
+  if (settings.searchTerm) searchBackgrounds(settings.searchTerm);
 
   strip.addEventListener("input", () => {
     scheduleSave();
