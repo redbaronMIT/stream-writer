@@ -149,6 +149,37 @@
   /* While typing, the footer fades; the credit drops to 90% translucent with it */
   body.typing #credit { opacity: 0.05; }
 
+  /* "<file> downloaded" note above the download button, shown when no title was typed */
+  .dl { position: relative; }
+  .dl-note {
+    position: absolute;
+    bottom: 100%;
+    left: 50%;
+    transform: translateX(-50%);
+    margin-bottom: 0.4rem;
+    white-space: nowrap;
+    font-size: 0.75rem;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.4s ease;
+  }
+  .dl-note.show { opacity: 0.8; }
+
+  /* Title box for the saved file name: inconspicuous until focused */
+  #titleInput {
+    width: 7rem;
+    padding: 0.25rem 0;
+    background: transparent;
+    border: 0;
+    border-bottom: 1px solid transparent;
+    outline: none;
+    color: inherit;
+    font: inherit;
+    text-align: right;
+  }
+  #titleInput::placeholder { color: inherit; opacity: 0.4; }
+  #titleInput:focus { border-bottom-color: rgba(255, 255, 255, 0.25); }
+
   /* Settings panel */
   #settings {
     position: fixed;
@@ -250,7 +281,11 @@
 </main>
 
 <footer id="footer">
-  <button id="saveBtn" title="Save as a .txt file on this computer">save as</button>
+  <input id="titleInput" type="text" placeholder="title" aria-label="File name (optional)" spellcheck="false" autocomplete="off">
+  <span class="dl">
+    <button id="saveBtn" title="Download as a .txt file on this computer">download</button>
+    <span id="dlNote" class="dl-note" aria-live="polite"></span>
+  </span>
   <span class="sep">·</span>
   <span id="count">0 words</span>
   <span class="sep">·</span>
@@ -398,10 +433,32 @@
   };
 
   // Download the current text as stream-YYYY-MM-DD-HHMM.txt
-  const saveAsText = () => {
+  // Default file name, e.g. stream-2026-10-25-1405 (shown greyed out in the title box)
+  const defaultName = () => {
     const d = new Date();
     const pad = (n) => String(n).padStart(2, "0");
-    const name = `stream-${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}.txt`;
+    return `stream-${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}`;
+  };
+  const refreshTitle = () => {
+    $("titleInput").value = "";
+  };
+  let noteTimer = null;
+  const saveAsText = () => {
+    // Typed title wins; characters that are illegal in filenames are stripped,
+    // and a typed ".txt" extension is dropped since it's added automatically
+    const title = $("titleInput").value
+      .replace(/[\\/:*?"<>|\x00-\x1f]/g, "")
+      .replace(/(\.txt)+$/i, "")
+      .trim()
+      .slice(0, 100);
+    const name = `${title || defaultName()}.txt`;
+    if (!title) {
+      const note = $("dlNote");
+      note.textContent = `${name} downloaded`;
+      note.classList.add("show");
+      clearTimeout(noteTimer);
+      noteTimer = setTimeout(() => note.classList.remove("show"), 10000);
+    }
     const url = URL.createObjectURL(new Blob([strip.value], { type: "text/plain;charset=utf-8" }));
     const a = document.createElement("a");
     a.href = url;
@@ -461,6 +518,7 @@
       return;
     }
     strip.value = "";
+    refreshTitle();
     save();
     updateCount();
     fitBottom();
@@ -528,6 +586,7 @@
       return;
     }
     strip.value = chosen.text;
+    refreshTitle();
     save();
     updateCount();
     fitBottom();
@@ -682,6 +741,9 @@
   });
 
   $("saveBtn").addEventListener("click", saveAsText);
+  $("titleInput").addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); strip.focus(); }
+  });
   $("histBtn").addEventListener("click", () => {
     const panel = $("history");
     $("settings").classList.remove("open");
@@ -703,8 +765,9 @@
       else toggleView();
       return;
     }
-    if (document.activeElement !== strip && (e.key === "b" || e.key === "B")) setBackground(bgIndex + 1);
-    if (document.activeElement !== strip && (e.key === "d" || e.key === "D")) toggleView();
+    const typing = ["TEXTAREA", "INPUT"].includes(document.activeElement.tagName);
+    if (!typing && (e.key === "b" || e.key === "B")) setBackground(bgIndex + 1);
+    if (!typing && (e.key === "d" || e.key === "D")) toggleView();
   });
 
   strip.focus();
