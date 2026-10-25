@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Stream</title>
+<title>StreamWrite</title>
 <style>
   :root {
     /* Defaults; the settings panel overrides these at runtime */
@@ -254,6 +254,7 @@
     text-align: right;
   }
   #settings .hint { margin-top: -0.5rem; font-size: 0.75rem; opacity: 0.55; }
+  #settings .version { align-self: flex-end; margin-top: -0.3rem; font-size: 0.65rem; opacity: 0.35; }
   #settings button.link {
     align-self: flex-end;
     margin-top: -0.5rem;
@@ -399,6 +400,7 @@
   <div class="hint" id="searchStatus"></div>
   <button type="button" id="clearSearchBtn" class="link">clear search</button>
   <button type="button" id="clearHistBtn" class="danger">clear history</button>
+  <span class="version" id="appVersion"></span>
 </div>
 
 <div id="history" role="dialog" aria-label="History">
@@ -420,6 +422,8 @@
 
 <script>
 (() => {
+  const VERSION = "0.2.0";
+  console.log(`stream-writer v${VERSION}`);
   const KEY = "stream-writer:v1";
   // Hotlinked. Each entry carries its own credit line (shown bottom-right).
   const BACKGROUNDS = [
@@ -951,6 +955,7 @@
   strip.value = load();
   updateCount();
   fitBottom();
+  $("appVersion").textContent = `v${VERSION}`;
   setBackground(bgIndex);
   if (settings.searchTerm) searchBackgrounds(settings.searchTerm);
 
