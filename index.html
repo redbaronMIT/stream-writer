@@ -493,6 +493,9 @@
   let idleTimer = null;
   const markTyping = () => {
     document.body.classList.add("typing");
+    // Popups close when writing starts, along with the footer
+    $("settings").classList.remove("open");
+    $("history").classList.remove("open");
     clearTimeout(idleTimer);
     idleTimer = setTimeout(() => document.body.classList.remove("typing"), 1500);
   };
