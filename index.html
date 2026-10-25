@@ -149,6 +149,31 @@
   /* While typing, the footer fades; the credit drops to 90% translucent with it */
   body.typing #credit { opacity: 0.05; }
 
+  /* "How does this work?" panel */
+  #about {
+    position: fixed;
+    left: 50%;
+    bottom: 3.5rem;
+    transform: translateX(-50%);
+    width: min(24rem, calc(100vw - 2rem));
+    max-height: 65vh;
+    overflow-y: auto;
+    display: none;
+    flex-direction: column;
+    gap: 0.6rem;
+    padding: 1rem 1.1rem;
+    background: rgba(12, 13, 18, 0.9);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 12px;
+    font: 0.82rem/1.5 -apple-system, system-ui, sans-serif;
+    color: rgba(255, 255, 255, 0.85);
+  }
+  #about.open { display: flex; }
+  #about p { margin: 0; }
+  #about .keys { opacity: 0.55; font-size: 0.75rem; }
+
   /* "<file> downloaded" note above the download button, shown when no title was typed */
   .dl { position: relative; }
   .dl-note {
@@ -217,6 +242,17 @@
     cursor: pointer;
   }
   #settings input:disabled { cursor: default; }
+  #settings button.danger {
+    align-self: flex-start;
+    padding: 0.35rem 0.7rem;
+    background: none;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 8px;
+    color: inherit;
+    font: inherit;
+    cursor: pointer;
+  }
+  #settings button.danger:hover { border-color: rgba(255, 255, 255, 0.5); }
   #settings output {
     min-width: 2.4rem;
     text-align: right;
@@ -294,6 +330,7 @@
   <button id="setBtn" title="Settings">settings</button>
   <button id="histBtn" title="Switch between saved pages">history</button>
   <button id="clearBtn" title="Start a new page (Ctrl/Cmd+Shift+Backspace)">new</button>
+  <button id="aboutBtn" title="How this site works">how does this work?</button>
 </footer>
 
 <a id="credit" target="_blank" rel="noopener"></a>
@@ -331,11 +368,24 @@
     <input type="range" id="set-fade" min="0" max="100" step="5">
     <output id="out-fade"></output>
   </label>
+  <button type="button" id="clearHistBtn" class="danger">clear history</button>
 </div>
 
 <div id="history" role="dialog" aria-label="History">
   <div id="historyList"></div>
   <p class="empty" id="historyEmpty">No saved pages yet.</p>
+</div>
+
+<div id="about" role="dialog" aria-label="How this site works">
+  <p><strong>Write.</strong> Type in the strip. Only the last few lines show, and new text grows upward from the bottom line.</p>
+  <p><strong>Saved here.</strong> Your text autosaves in this browser as you type, so reloads and the back button are safe. History and settings are also stored only in this browser. Clearing site data erases them.</p>
+  <p><strong>download</strong> saves the page as a .txt file. Type a title to name it, or leave it empty for a timestamped name. A typed .txt extension is added automatically, so you don't need to type it.</p>
+  <p><strong>new</strong> downloads the current page, adds it to <strong>history</strong>, and starts a blank one.</p>
+  <p><strong>history</strong> lists earlier pages. Click one to switch to it. The page you were on goes into history first.</p>
+  <p><strong>settings</strong> sets the number of lines, the box, colors, and text fade.</p>
+  <p><strong>view all</strong> shows the whole text at full width.</p>
+  <p class="keys">B background · D view all · Esc closes panels, or toggles view · Cmd/Ctrl+Shift+Backspace new</p>
+  <p class="keys">Backgrounds load from Wikimedia Commons, Unsplash, and ESA. Each credit line links to its source. Nothing you write is sent anywhere.</p>
 </div>
 
 <script>
@@ -496,6 +546,7 @@
     // Popups close when writing starts, along with the footer
     $("settings").classList.remove("open");
     $("history").classList.remove("open");
+    $("about").classList.remove("open");
     clearTimeout(idleTimer);
     idleTimer = setTimeout(() => document.body.classList.remove("typing"), 1500);
   };
@@ -714,6 +765,18 @@
   $("setBtn").addEventListener("click", () => {
     const panel = $("settings");
     $("history").classList.remove("open");
+    $("about").classList.remove("open");
+    panel.classList.toggle("open");
+  });
+  $("clearHistBtn").addEventListener("click", () => {
+    if (!confirm("Delete all saved pages in history? This can't be undone.")) return;
+    try { localStorage.removeItem(HISTORY_KEY); } catch {}
+    if ($("history").classList.contains("open")) renderHistory();
+  });
+  $("aboutBtn").addEventListener("click", () => {
+    const panel = $("about");
+    $("settings").classList.remove("open");
+    $("history").classList.remove("open");
     panel.classList.toggle("open");
   });
   applySettings();
@@ -750,6 +813,7 @@
   $("histBtn").addEventListener("click", () => {
     const panel = $("history");
     $("settings").classList.remove("open");
+    $("about").classList.remove("open");
     panel.classList.toggle("open");
     if (panel.classList.contains("open")) renderHistory();
   });
@@ -761,10 +825,8 @@
     const mod = e.metaKey || e.ctrlKey;
     if (mod && e.shiftKey && e.key === "Backspace") { e.preventDefault(); newPage(); return; }
     if (e.key === "Escape") {
-      const settingsPanel = $("settings");
-      const historyPanel = $("history");
-      if (settingsPanel.classList.contains("open")) settingsPanel.classList.remove("open");
-      else if (historyPanel.classList.contains("open")) historyPanel.classList.remove("open");
+      const openPanel = ["settings", "history", "about"].map($).find((p) => p.classList.contains("open"));
+      if (openPanel) openPanel.classList.remove("open");
       else toggleView();
       return;
     }
