@@ -193,6 +193,45 @@
     font-variant-numeric: tabular-nums;
   }
 
+  /* History panel */
+  #history {
+    position: fixed;
+    left: 50%;
+    bottom: 3.5rem;
+    transform: translateX(-50%);
+    width: min(22rem, calc(100vw - 2rem));
+    max-height: 60vh;
+    overflow-y: auto;
+    display: none;
+    flex-direction: column;
+    gap: 0.2rem;
+    padding: 0.5rem;
+    background: rgba(12, 13, 18, 0.88);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 12px;
+    font: 0.85rem/1.3 -apple-system, system-ui, sans-serif;
+    color: rgba(255, 255, 255, 0.85);
+  }
+  #history.open { display: flex; }
+  #history button.item {
+    display: block;
+    width: 100%;
+    background: none;
+    border: 0;
+    border-radius: 8px;
+    padding: 0.5rem 0.6rem;
+    color: inherit;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+  }
+  #history button.item:hover { background: rgba(255, 255, 255, 0.08); }
+  #history .when { opacity: 0.5; font-size: 0.75rem; }
+  #history .preview { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #history .empty { margin: 0; padding: 0.5rem 0.6rem; opacity: 0.5; }
+
   @media (max-width: 600px) {
     #strip { --line: 1.95rem; font-size: 1.1rem; }
   }
@@ -211,13 +250,14 @@
 </main>
 
 <footer id="footer">
-  <span id="status">saved</span>
+  <button id="saveBtn" title="Save as a .txt file on this computer">save as</button>
   <span class="sep">·</span>
   <span id="count">0 words</span>
   <span class="sep">·</span>
   <button id="bgBtn" title="Change background (B)">background</button>
   <button id="viewBtn" title="Toggle document view (D)">view all</button>
   <button id="setBtn" title="Settings">settings</button>
+  <button id="histBtn" title="Switch between saved pages">history</button>
   <button id="clearBtn" title="Start a new page (Ctrl/Cmd+Shift+Backspace)">new</button>
 </footer>
 
@@ -256,6 +296,11 @@
     <input type="range" id="set-fade" min="0" max="100" step="5">
     <output id="out-fade"></output>
   </label>
+</div>
+
+<div id="history" role="dialog" aria-label="History">
+  <div id="historyList"></div>
+  <p class="empty" id="historyEmpty">No saved pages yet.</p>
 </div>
 
 <script>
@@ -334,7 +379,6 @@
 
   const $ = (id) => document.getElementById(id);
   const strip = $("strip");
-  const statusEl = $("status");
   const countEl = $("count");
   const bgLayers = [$("bg-a"), $("bg-b")];
   let activeLayer = 0;
@@ -345,18 +389,27 @@
     try { return localStorage.getItem(KEY) ?? ""; } catch { return ""; }
   };
   const save = () => {
-    try {
-      localStorage.setItem(KEY, strip.value);
-      statusEl.textContent = "saved";
-    } catch {
-      statusEl.textContent = "not saved (storage blocked)";
-    }
+    try { localStorage.setItem(KEY, strip.value); } catch {}
   };
   let saveTimer = null;
   const scheduleSave = () => {
-    statusEl.textContent = "saving…";
     clearTimeout(saveTimer);
     saveTimer = setTimeout(save, 250);
+  };
+
+  // Download the current text as stream-YYYY-MM-DD-HHMM.txt
+  const saveAsText = () => {
+    const d = new Date();
+    const pad = (n) => String(n).padStart(2, "0");
+    const name = `stream-${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}.txt`;
+    const url = URL.createObjectURL(new Blob([strip.value], { type: "text/plain;charset=utf-8" }));
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = name;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
 
   // ---------- counts ----------
@@ -394,21 +447,23 @@
   // ---------- view toggle ----------
   const toggleView = () => {
     document.body.classList.toggle("doc");
+    fitBottom();
     $("viewBtn").textContent = document.body.classList.contains("doc") ? "write" : "view all";
   };
 
   // ---------- new page (archives current text into a history key, then clears) ----------
   const newPage = () => {
     if (!strip.value.trim()) return;
-    if (!confirm("Start a new page? The current text is kept in history.")) return;
-    try {
-      const hist = JSON.parse(localStorage.getItem(KEY + ":history") || "[]");
-      hist.push({ at: new Date().toISOString(), text: strip.value });
-      localStorage.setItem(KEY + ":history", JSON.stringify(hist));
-    } catch {}
+    if (!confirm("Download this page as a .txt file and start a new one? It will also be kept in history.")) return;
+    saveAsText();
+    if (!archiveCurrent()) {
+      alert("Saved to your computer, but couldn't add it to history (browser storage is full). The page was not cleared.");
+      return;
+    }
     strip.value = "";
     save();
     updateCount();
+    fitBottom();
   };
 
   // ---------- whole lines only ----------
@@ -425,16 +480,95 @@
     if (Math.abs(target - strip.scrollTop) > 0.5) strip.scrollTop = target;
   };
 
+  // ---------- history ----------
+  // Pages cleared with "new" or swapped out via the history panel: [{ at, text }], oldest first
+  const HISTORY_KEY = KEY + ":history";
+  const readHistory = () => {
+    try { return JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]"); } catch { return []; }
+  };
+  const writeHistory = (list) => {
+    try { localStorage.setItem(HISTORY_KEY, JSON.stringify(list)); return true; } catch { return false; }
+  };
+  // Push the current text onto history. Returns false if storage refused the write.
+  const archiveCurrent = (list = readHistory()) => {
+    if (!strip.value.trim()) return writeHistory(list);
+    list.push({ at: new Date().toISOString(), text: strip.value });
+    return writeHistory(list);
+  };
+
+  const renderHistory = () => {
+    const list = $("historyList");
+    const entries = readHistory();
+    list.replaceChildren();
+    $("historyEmpty").hidden = entries.length > 0;
+    for (let i = entries.length - 1; i >= 0; i--) {
+      const entry = entries[i];
+      const btn = document.createElement("button");
+      btn.className = "item";
+      const when = document.createElement("div");
+      when.className = "when";
+      when.textContent = new Date(entry.at).toLocaleString();
+      const preview = document.createElement("div");
+      preview.className = "preview";
+      preview.textContent = entry.text.trim().slice(0, 80) || "(empty)";
+      btn.append(when, preview);
+      btn.addEventListener("click", () => loadFromHistory(i));
+      list.appendChild(btn);
+    }
+  };
+
+  // Swap: the current text goes to history, the chosen entry becomes the current page
+  const loadFromHistory = (index) => {
+    const entries = readHistory();
+    const chosen = entries[index];
+    if (!chosen) return;
+    const rest = entries.filter((_, i) => i !== index);
+    if (!archiveCurrent(rest)) {
+      alert("Couldn't switch pages: browser storage is full. Save the current page as a file first.");
+      return;
+    }
+    strip.value = chosen.text;
+    save();
+    updateCount();
+    fitBottom();
+    snapToLines("up");
+    $("history").classList.remove("open");
+  };
+
+  // ---------- bottom-anchored text ----------
+  // Text starts on the bottom line and grows upward. While the text is shorter than the
+  // box, pad the top of the textarea so its last line sits on the bottom line.
+  const mirror = document.createElement("div");
+  mirror.setAttribute("aria-hidden", "true");
+  Object.assign(mirror.style, {
+    position: "absolute", visibility: "hidden", top: "-9999px", left: "0",
+    whiteSpace: "pre-wrap", overflowWrap: "break-word", padding: "0", border: "0",
+  });
+  document.body.appendChild(mirror);
+
+  const fitBottom = () => {
+    if (document.body.classList.contains("doc")) { strip.style.paddingTop = ""; return; }
+    const cs = getComputedStyle(strip);
+    Object.assign(mirror.style, {
+      width: strip.clientWidth + "px",
+      fontFamily: cs.fontFamily, fontSize: cs.fontSize, fontWeight: cs.fontWeight,
+      fontStyle: cs.fontStyle, letterSpacing: cs.letterSpacing, lineHeight: cs.lineHeight,
+    });
+    // Trailing space keeps a trailing newline from being dropped as an empty line
+    mirror.textContent = strip.value + " ";
+    strip.style.paddingTop = Math.max(0, strip.clientHeight - mirror.offsetHeight) + "px";
+  };
+
   // ---------- settings ----------
   const SETTINGS_KEY = "stream-writer:settings:v1";
   const DEFAULTS = {
     lines: 4,
-    box: false,
+    box: true,
     boxAlpha: 35,
     boxGrad: 0,
     ink: "#f5f5f5",
     boxColor: "#000000",
-    textFade: 40,
+    textFade: 0,
   };
   const settings = (() => {
     try { return { ...DEFAULTS, ...JSON.parse(localStorage.getItem(SETTINGS_KEY) || "{}") }; }
@@ -507,30 +641,38 @@
     settings.textFade = Number(ui.textFade.value);
     saveSettings();
     applySettings();
+    fitBottom();
     snapToLines("up");
   };
 
   [ui.lines, ui.box, ui.alpha, ui.boxGrad, ui.ink, ui.boxColor, ui.textFade].forEach((el) =>
     el.addEventListener("input", onSettingsInput)
   );
-  $("setBtn").addEventListener("click", () => $("settings").classList.toggle("open"));
+  // Settings and history share the same spot, so only one is open at a time
+  $("setBtn").addEventListener("click", () => {
+    const panel = $("settings");
+    $("history").classList.remove("open");
+    panel.classList.toggle("open");
+  });
   applySettings();
 
   // ---------- events ----------
   strip.value = load();
   updateCount();
+  fitBottom();
   setBackground(bgIndex);
 
   strip.addEventListener("input", () => {
     scheduleSave();
     updateCount();
     markTyping();
+    fitBottom();
     snapToLines("up");
   });
   strip.addEventListener("keyup", () => snapToLines("up"));
   strip.addEventListener("click", () => snapToLines("up"));
   strip.addEventListener("scroll", () => snapToLines("round"));
-  window.addEventListener("resize", () => snapToLines("round"));
+  window.addEventListener("resize", () => { fitBottom(); snapToLines("round"); });
 
   // Flush on the ways people lose work: back button, tab close, switching apps
   window.addEventListener("pagehide", save);
@@ -539,6 +681,13 @@
     if (document.visibilityState === "hidden") save();
   });
 
+  $("saveBtn").addEventListener("click", saveAsText);
+  $("histBtn").addEventListener("click", () => {
+    const panel = $("history");
+    $("settings").classList.remove("open");
+    panel.classList.toggle("open");
+    if (panel.classList.contains("open")) renderHistory();
+  });
   $("bgBtn").addEventListener("click", () => setBackground(bgIndex + 1));
   $("viewBtn").addEventListener("click", toggleView);
   $("clearBtn").addEventListener("click", newPage);
@@ -547,8 +696,10 @@
     const mod = e.metaKey || e.ctrlKey;
     if (mod && e.shiftKey && e.key === "Backspace") { e.preventDefault(); newPage(); return; }
     if (e.key === "Escape") {
-      const panel = $("settings");
-      if (panel.classList.contains("open")) panel.classList.remove("open");
+      const settingsPanel = $("settings");
+      const historyPanel = $("history");
+      if (settingsPanel.classList.contains("open")) settingsPanel.classList.remove("open");
+      else if (historyPanel.classList.contains("open")) historyPanel.classList.remove("open");
       else toggleView();
       return;
     }
