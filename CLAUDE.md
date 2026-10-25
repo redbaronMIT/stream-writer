@@ -33,3 +33,9 @@ Everything lives in `index.html`: CSS in `<style>`, markup, and one IIFE in `<sc
 - Keep it one file unless the user asks otherwise.
 - Settings controls and their labels are plain `<label>` rows inside `#settings`. Adding a setting means updating `DEFAULTS`, `ui`, `applySettings`, `onSettingsInput`, and the markup.
 - Settings labels are user-facing wording. Check with the user before renaming them.
+
+## Versioning
+
+- Every push bumps `VERSION` in `index.html` (the settings label and console log show it).
+- Patch (0.2.0 → 0.2.1): fixes and small tweaks. Minor (0.2.x → 0.3.0): new features or settings.
+- Never change the major number without asking the user.
