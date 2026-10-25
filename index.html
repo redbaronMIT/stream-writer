@@ -1,0 +1,565 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Stream</title>
+<style>
+  :root {
+    /* Defaults; the settings panel overrides these at runtime */
+    --ink: rgba(255, 255, 255, 0.92);
+    --dim: rgba(255, 255, 255, 0.45);
+    --column: min(34rem, calc(100vw - 2rem));
+    --lines: 4;
+    --box-bg: transparent;
+    --fade: 40%;
+    --pad-y: 0px;
+    --pad-x: 0px;
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body {
+    margin: 0;
+    height: 100%;
+    background: #05060a;
+    color: var(--ink);
+    font-family: "Iowan Old Style", "Palatino", Georgia, serif;
+    overflow: hidden;
+  }
+
+  /* Background layers: one image at a time, slow crossfade on change */
+  .bg {
+    position: fixed;
+    inset: 0;
+    background-size: cover;
+    background-position: center;
+    transition: opacity 1.2s ease;
+    opacity: 0;
+  }
+  .bg.on { opacity: 1; }
+
+  .veil {
+    position: fixed;
+    inset: 0;
+    background: radial-gradient(ellipse at center, rgba(0,0,0,0.25) 0%, rgba(0,0,0,0.75) 100%);
+    pointer-events: none;
+  }
+
+  /* The narrow strip */
+  main {
+    position: relative;
+    height: 100%;
+    display: flex;
+    justify-content: center;
+  }
+
+  /* Frame: holds the optional box and its padding, vertically centered */
+  #frame {
+    align-self: center;
+    width: var(--column);
+    padding: var(--pad-y) var(--pad-x);
+    background: var(--box-bg);
+    border-radius: 10px;
+  }
+
+  /* The strip: exactly --lines full lines tall, no padding, so no line is ever cut.
+     Scroll position is snapped to line boundaries (see snapToLines). */
+  #strip {
+    --line: 2.1875rem;
+    display: block;
+    width: 100%;
+    height: calc(var(--line) * var(--lines));
+    padding: 0;
+    margin: 0;
+    background: transparent;
+    border: 0;
+    outline: none;
+    resize: none;
+    overflow-y: hidden;
+    color: var(--ink);
+    font: inherit;
+    font-size: 1.25rem;
+    line-height: var(--line);
+    text-align: left;
+    text-shadow: 0 1px 12px rgba(0,0,0,0.6);
+    caret-color: var(--ink);
+    /* Top line fades so the window reads as a window, not a box */
+    -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 var(--fade));
+            mask-image: linear-gradient(to bottom, transparent 0, #000 var(--fade));
+    scrollbar-width: none;
+  }
+  #strip::-webkit-scrollbar { display: none; }
+
+  /* Document view: same text, wider, full height, unmasked */
+  body.doc #frame {
+    align-self: stretch;
+    width: min(46rem, calc(100vw - 2rem));
+    height: 100%;
+    padding: 10vh 0;
+  }
+  body.doc #strip {
+    --line: 1.75rem;
+    height: 100%;
+    overflow-y: auto;
+    font-size: 1.05rem;
+    -webkit-mask-image: none;
+            mask-image: none;
+  }
+  body.doc .veil { background: rgba(0,0,0,0.6); }
+
+  /* Quiet footer: everything secondary lives here */
+  footer {
+    position: fixed;
+    left: 0; right: 0; bottom: 1.25rem;
+    display: flex;
+    justify-content: center;
+    gap: 1.25rem;
+    font: 0.8rem/1 -apple-system, system-ui, sans-serif;
+    color: var(--dim);
+    transition: opacity 0.6s ease;
+  }
+  footer button {
+    background: none;
+    border: 0;
+    color: inherit;
+    font: inherit;
+    cursor: pointer;
+    padding: 0.25rem 0.4rem;
+  }
+  footer button:hover { color: var(--ink); }
+  footer .sep { opacity: 0.4; }
+
+  /* Hide chrome while typing; reappears on mouse move or after a pause */
+  body.typing footer { opacity: 0; }
+
+  /* Image credit: always visible, subtle, links to the source */
+  #credit {
+    position: fixed;
+    right: 1rem;
+    bottom: 1.25rem;
+    font: 0.7rem/1 -apple-system, system-ui, sans-serif;
+    color: var(--dim);
+    text-decoration: none;
+    text-shadow: 0 1px 6px rgba(0,0,0,0.7);
+    opacity: 0.6;
+    transition: opacity 0.6s ease;
+  }
+  #credit:hover { opacity: 1; text-decoration: underline; }
+  /* While typing, the footer fades; the credit drops to 90% translucent with it */
+  body.typing #credit { opacity: 0.05; }
+
+  /* Settings panel */
+  #settings {
+    position: fixed;
+    left: 50%;
+    bottom: 3.5rem;
+    transform: translateX(-50%);
+    width: min(20rem, calc(100vw - 2rem));
+    display: none;
+    flex-direction: column;
+    gap: 0.9rem;
+    padding: 1rem 1.1rem;
+    background: rgba(12, 13, 18, 0.88);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 12px;
+    font: 0.85rem/1.2 -apple-system, system-ui, sans-serif;
+    color: rgba(255, 255, 255, 0.85);
+  }
+  #settings.open { display: flex; }
+  #settings label {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 0.75rem;
+  }
+  #settings label.off { opacity: 0.4; }
+  #settings input[type="range"] { flex: 1; max-width: 9rem; }
+  #settings input[type="color"] {
+    width: 2.2rem;
+    height: 1.6rem;
+    padding: 0;
+    border: 0;
+    background: none;
+    cursor: pointer;
+  }
+  #settings input:disabled { cursor: default; }
+  #settings output {
+    min-width: 2.4rem;
+    text-align: right;
+    opacity: 0.6;
+    font-variant-numeric: tabular-nums;
+  }
+
+  @media (max-width: 600px) {
+    #strip { --line: 1.95rem; font-size: 1.1rem; }
+  }
+</style>
+</head>
+<body>
+
+<div class="bg" id="bg-a"></div>
+<div class="bg" id="bg-b"></div>
+<div class="veil"></div>
+
+<main>
+  <div id="frame">
+    <textarea id="strip" spellcheck="false" autocorrect="off" autocapitalize="off" autofocus placeholder="just write."></textarea>
+  </div>
+</main>
+
+<footer id="footer">
+  <span id="status">saved</span>
+  <span class="sep">·</span>
+  <span id="count">0 words</span>
+  <span class="sep">·</span>
+  <button id="bgBtn" title="Change background (B)">background</button>
+  <button id="viewBtn" title="Toggle document view (D)">view all</button>
+  <button id="setBtn" title="Settings">settings</button>
+  <button id="clearBtn" title="Start a new page (Ctrl/Cmd+Shift+Backspace)">new</button>
+</footer>
+
+<a id="credit" target="_blank" rel="noopener"></a>
+
+<div id="settings" role="dialog" aria-label="Settings">
+  <label>
+    <span>Lines</span>
+    <input type="range" id="set-lines" min="1" max="12" step="1">
+    <output id="out-lines"></output>
+  </label>
+  <label>
+    <span>Show box</span>
+    <input type="checkbox" id="set-box">
+  </label>
+  <label id="row-alpha">
+    <span>Box opacity</span>
+    <input type="range" id="set-alpha" min="0" max="100" step="5">
+    <output id="out-alpha"></output>
+  </label>
+  <label>
+    <span>Text color</span>
+    <input type="color" id="set-ink">
+  </label>
+  <label id="row-boxcolor">
+    <span>Box color</span>
+    <input type="color" id="set-boxcolor">
+  </label>
+  <label id="row-boxgrad">
+    <span>Box gradient</span>
+    <input type="range" id="set-boxgrad" min="0" max="100" step="5">
+    <output id="out-boxgrad"></output>
+  </label>
+  <label>
+    <span>Text fade</span>
+    <input type="range" id="set-fade" min="0" max="100" step="5">
+    <output id="out-fade"></output>
+  </label>
+</div>
+
+<script>
+(() => {
+  const KEY = "stream-writer:v1";
+  // Hotlinked. Each entry carries its own credit line (shown bottom-right).
+  const BACKGROUNDS = [
+    {
+      src: "https://cdn.esahubble.org/archives/images/screen/heic0601a.jpg",
+      text: "Orion Nebula · ESA/Hubble & NASA · CC BY 4.0",
+      url: "https://esahubble.org/images/heic0601a/",
+    },
+    {
+      src: "https://images.unsplash.com/photo-1441974231531-c6227db76b6e?w=1920",
+      text: "Forest · Unsplash",
+      url: "https://unsplash.com",
+    },
+    {
+      src: "https://images.unsplash.com/photo-1506905925346-21bda4d32df4?w=1920",
+      text: "Mountains · Unsplash",
+      url: "https://unsplash.com",
+    },
+    {
+      src: "https://images.unsplash.com/photo-1470071459604-3b5ec3a7fe05?w=1920",
+      text: "Valley · Unsplash",
+      url: "https://unsplash.com",
+    },
+    // Space (Wikimedia Commons, license noted per entry)
+    {
+      src: "https://thumb.wikimedia.org/wikipedia/commons/thumb/c/c7/Saturn_during_Equinox.jpg/1920px-Saturn_during_Equinox.jpg",
+      text: "Saturn · NASA/JPL/Space Science Institute · Public domain",
+      url: "https://commons.wikimedia.org/wiki/File:Saturn_during_Equinox.jpg",
+    },
+    {
+      src: "https://thumb.wikimedia.org/wikipedia/commons/thumb/0/02/NGC_2683_Spiral_galaxy.jpg/1920px-NGC_2683_Spiral_galaxy.jpg",
+      text: "NGC 2683 · NASA · Public domain",
+      url: "https://commons.wikimedia.org/wiki/File:NGC_2683_Spiral_galaxy.jpg",
+    },
+    {
+      src: "https://thumb.wikimedia.org/wikipedia/commons/thumb/3/31/Aurora_Seen_From_Space_by_NASA.jpg/1920px-Aurora_Seen_From_Space_by_NASA.jpg",
+      text: "Aurora from orbit · NASA · Public domain",
+      url: "https://commons.wikimedia.org/wiki/File:Aurora_Seen_From_Space_by_NASA.jpg",
+    },
+    {
+      src: "https://thumb.wikimedia.org/wikipedia/commons/thumb/6/60/ESO_-_Milky_Way.jpg/1920px-ESO_-_Milky_Way.jpg",
+      text: "Milky Way · ESO/S. Brunier · CC BY 4.0",
+      url: "https://commons.wikimedia.org/wiki/File:ESO_-_Milky_Way.jpg",
+    },
+    {
+      src: "https://thumb.wikimedia.org/wikipedia/commons/thumb/a/a6/Pale_Blue_Dot_from_Voyager_1_-_PIA23645.png/1920px-Pale_Blue_Dot_from_Voyager_1_-_PIA23645.png",
+      text: "Pale Blue Dot · NASA/JPL-Caltech · Public domain",
+      url: "https://commons.wikimedia.org/wiki/File:Pale_Blue_Dot_from_Voyager_1_-_PIA23645.png",
+    },
+    // Calm landscapes
+    {
+      src: "https://thumb.wikimedia.org/wikipedia/commons/thumb/d/d7/Golden_sunset_silhouette_of_a_small_boat_on_a_calm_lake.jpg/1920px-Golden_sunset_silhouette_of_a_small_boat_on_a_calm_lake.jpg",
+      text: "Sunset on still water · Johannes Plenio · CC0",
+      url: "https://commons.wikimedia.org/wiki/File:Golden_sunset_silhouette_of_a_small_boat_on_a_calm_lake.jpg",
+    },
+    {
+      src: "https://thumb.wikimedia.org/wikipedia/commons/thumb/4/49/Sunset_at_Federsee%2C_Bad_Buchau_by_MFOXMedia.jpg/1920px-Sunset_at_Federsee%2C_Bad_Buchau_by_MFOXMedia.jpg",
+      text: "Federsee at sunset · MFOXMedia · CC BY 4.0",
+      url: "https://commons.wikimedia.org/wiki/File:Sunset_at_Federsee,_Bad_Buchau_by_MFOXMedia.jpg",
+    },
+    {
+      src: "https://thumb.wikimedia.org/wikipedia/commons/thumb/4/40/Sunset_sky_water.jpg/1920px-Sunset_sky_water.jpg",
+      text: "Sunset over water · Unknown author · CC0",
+      url: "https://commons.wikimedia.org/wiki/File:Sunset_sky_water.jpg",
+    },
+    {
+      src: "https://thumb.wikimedia.org/wikipedia/commons/thumb/3/3c/Continental_Divide_and_Calm_Waters%2C_Grandby_Lake%2C_CO_2012_%2814854216635%29.jpg/1920px-Continental_Divide_and_Calm_Waters%2C_Grandby_Lake%2C_CO_2012_%2814854216635%29.jpg",
+      text: "Grandby Lake · inkknife_2000 · CC BY-SA 2.0",
+      url: "https://commons.wikimedia.org/wiki/File:Continental_Divide_and_Calm_Waters,_Grandby_Lake,_CO_2012_(14854216635).jpg",
+    },
+  ];
+
+  const $ = (id) => document.getElementById(id);
+  const strip = $("strip");
+  const statusEl = $("status");
+  const countEl = $("count");
+  const bgLayers = [$("bg-a"), $("bg-b")];
+  let activeLayer = 0;
+  let bgIndex = Math.floor(Math.random() * BACKGROUNDS.length);
+
+  // ---------- storage (autosave, never lose work) ----------
+  const load = () => {
+    try { return localStorage.getItem(KEY) ?? ""; } catch { return ""; }
+  };
+  const save = () => {
+    try {
+      localStorage.setItem(KEY, strip.value);
+      statusEl.textContent = "saved";
+    } catch {
+      statusEl.textContent = "not saved (storage blocked)";
+    }
+  };
+  let saveTimer = null;
+  const scheduleSave = () => {
+    statusEl.textContent = "saving…";
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(save, 250);
+  };
+
+  // ---------- counts ----------
+  const updateCount = () => {
+    const words = strip.value.trim() ? strip.value.trim().split(/\s+/).length : 0;
+    countEl.textContent = `${words} word${words === 1 ? "" : "s"}`;
+  };
+
+  // ---------- background ----------
+  const setBackground = (i) => {
+    bgIndex = (i + BACKGROUNDS.length) % BACKGROUNDS.length;
+    const next = bgLayers[1 - activeLayer];
+    const prev = bgLayers[activeLayer];
+    next.style.backgroundImage = `url("${BACKGROUNDS[bgIndex].src}")`;
+    next.classList.add("on");
+    prev.classList.remove("on");
+    activeLayer = 1 - activeLayer;
+    const credit = $("credit");
+    credit.textContent = BACKGROUNDS[bgIndex].text;
+    credit.href = BACKGROUNDS[bgIndex].url;
+  };
+
+  // ---------- typing state (hides footer while writing) ----------
+  let idleTimer = null;
+  const markTyping = () => {
+    document.body.classList.add("typing");
+    clearTimeout(idleTimer);
+    idleTimer = setTimeout(() => document.body.classList.remove("typing"), 1500);
+  };
+  document.addEventListener("mousemove", () => {
+    document.body.classList.remove("typing");
+    clearTimeout(idleTimer);
+  });
+
+  // ---------- view toggle ----------
+  const toggleView = () => {
+    document.body.classList.toggle("doc");
+    $("viewBtn").textContent = document.body.classList.contains("doc") ? "write" : "view all";
+  };
+
+  // ---------- new page (archives current text into a history key, then clears) ----------
+  const newPage = () => {
+    if (!strip.value.trim()) return;
+    if (!confirm("Start a new page? The current text is kept in history.")) return;
+    try {
+      const hist = JSON.parse(localStorage.getItem(KEY + ":history") || "[]");
+      hist.push({ at: new Date().toISOString(), text: strip.value });
+      localStorage.setItem(KEY + ":history", JSON.stringify(hist));
+    } catch {}
+    strip.value = "";
+    save();
+    updateCount();
+  };
+
+  // ---------- whole lines only ----------
+  // The strip never shows a partial line at either edge.
+  // "up" rounds the scroll position up to the next line boundary (used while typing,
+  // so the caret line stays fully visible); "round" snaps to the nearest one (manual scroll).
+  const lineHeight = () => parseFloat(getComputedStyle(strip).lineHeight);
+  const snapToLines = (mode) => {
+    if (document.body.classList.contains("doc")) return;
+    const lh = lineHeight();
+    const max = strip.scrollHeight - strip.clientHeight;
+    const lines = strip.scrollTop / lh;
+    const target = Math.min(max, (mode === "up" ? Math.ceil(lines) : Math.round(lines)) * lh);
+    if (Math.abs(target - strip.scrollTop) > 0.5) strip.scrollTop = target;
+  };
+
+  // ---------- settings ----------
+  const SETTINGS_KEY = "stream-writer:settings:v1";
+  const DEFAULTS = {
+    lines: 4,
+    box: false,
+    boxAlpha: 35,
+    boxGrad: 0,
+    ink: "#f5f5f5",
+    boxColor: "#000000",
+    textFade: 40,
+  };
+  const settings = (() => {
+    try { return { ...DEFAULTS, ...JSON.parse(localStorage.getItem(SETTINGS_KEY) || "{}") }; }
+    catch { return { ...DEFAULTS }; }
+  })();
+  const saveSettings = () => {
+    try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)); } catch {}
+  };
+  const hexToRgba = (hex, alpha) => {
+    const n = parseInt(hex.slice(1), 16);
+    return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${alpha})`;
+  };
+
+  const ui = {
+    lines: $("set-lines"),
+    box: $("set-box"),
+    alpha: $("set-alpha"),
+    ink: $("set-ink"),
+    boxColor: $("set-boxcolor"),
+    boxGrad: $("set-boxgrad"),
+    textFade: $("set-fade"),
+  };
+
+  // Push settings into CSS variables and sync the controls to them
+  const applySettings = () => {
+    const root = document.documentElement.style;
+    root.setProperty("--lines", settings.lines);
+    root.setProperty("--ink", settings.ink);
+    root.setProperty("--fade", `${settings.textFade}%`);
+    root.setProperty("--box-bg", settings.box ? boxBackground() : "transparent");
+    root.setProperty("--pad-y", settings.box ? "1rem" : "0px");
+    root.setProperty("--pad-x", settings.box ? "1.5rem" : "0px");
+
+    ui.lines.value = settings.lines;
+    $("out-lines").textContent = settings.lines;
+    ui.box.checked = settings.box;
+    ui.alpha.value = settings.boxAlpha;
+    $("out-alpha").textContent = `${settings.boxAlpha}%`;
+    ui.boxGrad.value = settings.boxGrad;
+    $("out-boxgrad").textContent = `${settings.boxGrad}%`;
+    ui.ink.value = settings.ink;
+    ui.boxColor.value = settings.boxColor;
+    ui.textFade.value = settings.textFade;
+    $("out-fade").textContent = `${settings.textFade}%`;
+
+    // Box-only controls are inert while the box is hidden
+    ui.alpha.disabled = !settings.box;
+    ui.boxGrad.disabled = !settings.box;
+    ui.boxColor.disabled = !settings.box;
+    $("row-alpha").classList.toggle("off", !settings.box);
+    $("row-boxgrad").classList.toggle("off", !settings.box);
+    $("row-boxcolor").classList.toggle("off", !settings.box);
+  };
+
+  // Box fill: a vertical gradient from the box's translucency at the top
+  // to (1 - gradient) of that alpha at the bottom
+  const boxBackground = () => {
+    const alpha = settings.boxAlpha / 100;
+    const fadeTo = alpha * (1 - settings.boxGrad / 100);
+    return `linear-gradient(to bottom, ${hexToRgba(settings.boxColor, fadeTo)}, ${hexToRgba(settings.boxColor, alpha)})`;
+  };
+
+  const onSettingsInput = () => {
+    settings.lines = Number(ui.lines.value);
+    settings.box = ui.box.checked;
+    settings.boxAlpha = Number(ui.alpha.value);
+    settings.boxGrad = Number(ui.boxGrad.value);
+    settings.ink = ui.ink.value;
+    settings.boxColor = ui.boxColor.value;
+    settings.textFade = Number(ui.textFade.value);
+    saveSettings();
+    applySettings();
+    snapToLines("up");
+  };
+
+  [ui.lines, ui.box, ui.alpha, ui.boxGrad, ui.ink, ui.boxColor, ui.textFade].forEach((el) =>
+    el.addEventListener("input", onSettingsInput)
+  );
+  $("setBtn").addEventListener("click", () => $("settings").classList.toggle("open"));
+  applySettings();
+
+  // ---------- events ----------
+  strip.value = load();
+  updateCount();
+  setBackground(bgIndex);
+
+  strip.addEventListener("input", () => {
+    scheduleSave();
+    updateCount();
+    markTyping();
+    snapToLines("up");
+  });
+  strip.addEventListener("keyup", () => snapToLines("up"));
+  strip.addEventListener("click", () => snapToLines("up"));
+  strip.addEventListener("scroll", () => snapToLines("round"));
+  window.addEventListener("resize", () => snapToLines("round"));
+
+  // Flush on the ways people lose work: back button, tab close, switching apps
+  window.addEventListener("pagehide", save);
+  window.addEventListener("beforeunload", save);
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "hidden") save();
+  });
+
+  $("bgBtn").addEventListener("click", () => setBackground(bgIndex + 1));
+  $("viewBtn").addEventListener("click", toggleView);
+  $("clearBtn").addEventListener("click", newPage);
+
+  document.addEventListener("keydown", (e) => {
+    const mod = e.metaKey || e.ctrlKey;
+    if (mod && e.shiftKey && e.key === "Backspace") { e.preventDefault(); newPage(); return; }
+    if (e.key === "Escape") {
+      const panel = $("settings");
+      if (panel.classList.contains("open")) panel.classList.remove("open");
+      else toggleView();
+      return;
+    }
+    if (document.activeElement !== strip && (e.key === "b" || e.key === "B")) setBackground(bgIndex + 1);
+    if (document.activeElement !== strip && (e.key === "d" || e.key === "D")) toggleView();
+  });
+
+  strip.focus();
+  strip.setSelectionRange(strip.value.length, strip.value.length);
+  snapToLines("up");
+})();
+</script>
+</body>
+</html>
